@@ -46,12 +46,7 @@ def split_data(data, label):
         ret_x_y.append((x_,y_))
     return tuple(ret_x_y)
 
-def grop_data(data):
-    # data is a nested data-label array format
-    s_data= []
-    for i in range(10):
-        for data[:,1] == i :
-            
+
 
 def create_pairs(x, class_indices):
     '''Positive and negative pair creation.
