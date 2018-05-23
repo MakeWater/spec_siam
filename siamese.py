@@ -73,7 +73,7 @@ def creat_siamese_network(data，params):
                                                   validation_data=None,
                                                   steps_per_epoch=steps_per_epoch,
                                                   callbacks=[siam_lh])
-
+ 
     
     # siamese_net_distance.fit(train_gen_)   #开始训练
 # 定义孪生网络的损失函数

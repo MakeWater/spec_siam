@@ -47,7 +47,7 @@ def split_data(data, label):
     return tuple(ret_x_y)
 
 
-
+ 
 def create_pairs(x, class_indices):
     '''Positive and negative pair creation.
     Alternates between positive and negative pairs.
