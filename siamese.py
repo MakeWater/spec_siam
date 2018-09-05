@@ -1,92 +1,160 @@
-# -*- coding: utf-8 -*-
+# -*- coding:utf-8 -*-
+import os
 import tensorflow as tf
-from keras.layers import Input, Dense
-from keras.models import Model, Sequential
-import numpy as np 
-from keras.optimizers import SGD, RMSprop
-from keras import backend as K
-from keras.layers import Input, Lambda
-from keras.models import Model
-from utility import euclidean_distance, eucl_dist_output_shape
-from layer import make_layer_list, stack_layers
-from data import get_unlabeled_data
+import numpy as np
 
-
-def creat_siamese_network(data，params):
+''' Definite Siamese network as a measure function after trained by pairs data'''
+class siamese():
+    ''' siamese network two steps: train by pairs data and pairs label;
+                                   measure similarity between samples as a measure function
     '''
-    base network to be shared(eq to feature extraction).
-    '''
-    x= get_unlabeled_data()
-    pairs_train, pairs_label = data['pairs_train'], data['pairs_label']
-    input_shape= x.shape[1:]
+    def __init__(self):
 
-    siamese_inputs= {'A':Input(shape= input_shape)
-                     'B': Input(shape= input_shape)
-                    }
-    # y_ 是谱聚类预测的标签。
-    y_ = predict_data(cluster_num= params['n_clusters'])
-    train_gen_ = train_gen(pairs_train, pairs_label, params['siam_batch_size'])
-    # y 是对标签。
-    y = train_gen_['label_y']
+        with tf.name_scope('input'):
+            with tf.name_scope('input_x1'):
+                self.x1 = tf.placeholder(tf.float32,[None,784])
+            with tf.name_scope('input_x2'):
+                self.x2 = tf.placeholder(tf.float32,[None,784])
+            with tf.name_scope('y_input'):
+                self.y_true = tf.placeholder(tf.float32,[None])
 
-    layers= []
-    layers += make_layer_list(params['arch'], 'siamese', params.get('siam_reg')) # 这里params.get('siam_reg')其实等于“None”
-        '''
-        layers=[{'l2_reg': reg，'type': 'relu', 'size': 1024，'name':'siamese_0'},{'name': 'siamese_dropout_0', 'rate': 0.05, 'type': 'Dropout'},
-                {'l2_reg': reg，'type': 'relu', 'size': 1024，'name':'siamese_1'},{'name': 'siamese_dropout_0', 'rate': 0.05, 'type': 'Dropout'},
-                {'l2_reg': reg，'type': 'relu', 'size': 512，'name':'siamese_2'},{'name': 'siamese_dropout_0', 'rate': 0.05, 'type': 'Dropout'},
-                {'l2_reg': reg，'type': 'relu', 'size': 10，'name':'siamese_3'},{'name': 'siamese_dropout_0', 'rate': 0.05, 'type': 'Dropout'}
-              ]
-        '''
-    # 画出这一步后的网络结构：
-    siamese_outputs = stack_layers(siamese_inputs, layers) # 这一步创建层模型，并且最终得到的输出还是dropout 层，不是softmax层得到的输出结果，
-    # 注意上面的“siamese_inputs”， 这个里面的inputs怎么传进去的以及里面的参数分别是怎么被使用的？注意创建/定义工具与实例化一个工具后再使用的区别。
-    # siamese_outputs={'A':InputA的输出，'B':InputB的输出}
+            with tf.name_scope('dropout'):
+                self.dropout = tf.placeholder(tf.float32)
 
-    distance = Lambda(euclidean_distance, output_shape= eucl_dist_output_shape)([siamese_outputs['A'], siamese_outputs['B']])
-    # 下面建立了一个从输入到输出的模型：
-    siamese_net_distance = Model([siamese_inputs['A'], siamese_intputs['B']], distance)
+        with tf.variable_scope('siamese') as scope:
+            with tf.name_scope('output1'):
+                self.output1 = self.deepnn(self.x1) # shape:(1000,10) or (1,10)
+            scope.reuse_variables()
+            with tf.name_scope('output2'):
+                self.output2 = self.deepnn(self.x2)
 
-    loss = contrastive_loss(distance, y) # 实例化一个自定义loss函数后才能传入配置中。
-    # 配置网络参数：
-    # 设想：Model([siamese_outputs['A'], siamese_outputs['B']], distance).compile(optimizer= 'RMSprop',loss= contrastive_loss)
-    siamese_net_distance.compile(optimizer= 'RMSprop',loss= loss) # 这个loss 函数怎样使用网络传出的数据？，包括两个embaddings 和一个标签。
+        with tf.name_scope('similarity'):
+            self.similarity = self.predict_similarity()
 
-    
-    
+        with tf.name_scope('learning_rate'):
+            self.global_step = tf.Variable(0,trainable=False)
+            self.learning_rate = tf.train.exponential_decay(0.01,self.global_step,50,0.96)
+            tf.summary.scalar('learning_rate',self.learning_rate)
 
-    # create handler for early stopping and learning rate scheduling 为提前停止和学习率变化设置learning handler处理程序
-    siam_lh = LearningHandler(
-            lr=params['siam_lr'],# 设置学习率
-            drop=params['siam_drop'],  #学习率递减速度
-            lr_tensor=siamese_net_distance.optimizer.lr,
-            patience=params['siam_patience'])
-    #初始化训练数据：
-    train_gen_ = train_gen(pairs_train, pairs_label, params['siam_batch_size'])
-    y = train_gen_['label_y']
-    # compute the steps per epoch
-    steps_per_epoch = int(len(pairs_train) / params['siam_batch_size'])
-    
-    # 返回一个history对象
-    hist = siamese_net_distance.fit_generator(train_gen_['A'],train_gen_['B'],y, 
-                                                  epochs=params['siam_ne'], 
-                                                  validation_data=None,
-                                                  steps_per_epoch=steps_per_epoch,
-                                                  callbacks=[siam_lh])
- 
-    
-    # siamese_net_distance.fit(train_gen_)   #开始训练
-# 定义孪生网络的损失函数
-def contrastive_loss(distance, y):
-    margin = params['margin']
-    tmp = y*tf.square(distance)
-    tmp2 = (1-y)*tf.square(tf.maximum((margin-d), 0))
-    return tf.reduce_mean(tmp + tmp2)/2
-    
-def contrastive_loss(y_true, y_pred):
-    '''Contrastive loss from Hadsell-et-al.'06
-    http://yann.lecun.com/exdb/publis/pdf/hadsell-chopra-lecun-06.pdf
-    '''
-    margin = 1
-    return K.mean(y_true * K.square(y_pred) +
-                (1 - y_true) * K.square(K.maximum(margin - y_pred, 0)))
+        with tf.name_scope('loss'):
+            self.loss = self.contro_loss()
+            tf.summary.scalar('loss',self.loss)
+
+        with tf.name_scope('train_step'):
+            self.train_step = tf.train.AdamOptimizer(self.learning_rate).minimize(self.loss)
+        self.saver = tf.train.Saver()
+        self.merged = tf.summary.merge_all()
+        self.initialize  = tf.global_variables_initializer().run()
+
+    def deepnn(self,x):
+
+        # input reshape to [batch_size,28,28,channel]
+        with tf.name_scope('reshape'):
+            # transform input type to tensorflow type
+            x = tf.cast(x,tf.float32)
+            x_image = tf.reshape(x,[-1,28,28,1])
+            tf.summary.image('input',x_image,10)
+
+        # layer1: picture width = 28->28
+        with tf.name_scope('conv1'):
+            w_conv1 = self.weight_variable([5,5,1,32])
+            self.variable_summaries(w_conv1)
+            b_conv1 = self.bias_variable([32])
+            self.variable_summaries(b_conv1)
+            h_conv1 = tf.nn.relu(self.conv2d(x_image,w_conv1) + b_conv1)
+            tf.summary.histogram('activation1',h_conv1)
+
+        # pooling layer1 : 28->14
+        with tf.name_scope('pooling1'):
+            h_pooling_1 = self.max_pool_2x2(h_conv1)
+
+        # convolution layer2 : 14->14
+        with tf.name_scope('conv2'):
+            w_conv2 = self.weight_variable([5,5,32,64])
+            self.variable_summaries(w_conv2)
+            b_conv2 = self.weight_variable([64])
+            self.variable_summaries(b_conv2)
+            h_conv2 = tf.nn.relu(self.conv2d(h_pooling_1,w_conv2) + b_conv2)
+            tf.summary.histogram('activation2',h_conv2)
+
+        # feature width : 14->7
+        with tf.name_scope('pooling2'):
+            h_pool2 = self.max_pool_2x2(h_conv2)
+
+        with tf.name_scope('fc1'):
+            # W2 = (W1-F+2P)/S + 1
+            w_fc1 = self.weight_variable([7*7*64,1024])
+            self.variable_summaries(w_fc1)
+            b_fc1 = self.bias_variable([1024])
+            self.variable_summaries(b_fc1)
+            h_pool2_flat = tf.reshape(h_pool2,[-1,7*7*64])
+            h_fc1 = tf.nn.relu(tf.matmul(h_pool2_flat,w_fc1) + b_fc1)
+            tf.summary.histogram('activation3',h_fc1)
+
+        with tf.name_scope('dropout'):
+            h_fc1_drop = tf.nn.dropout(h_fc1,self.dropout)
+            self.variable_summaries(h_fc1_drop)
+
+        with tf.name_scope('fc2'):
+            # embedding in shape: [batch_size,10]
+            w_fc2 = self.weight_variable([1024,10])
+            self.variable_summaries(w_fc2)
+            b_fc2 = self.bias_variable([10])
+            self.variable_summaries(b_fc2)
+            embedding = tf.matmul(h_fc1,w_fc2)+b_fc2
+            tf.summary.histogram('embedding',embedding)
+            # embedding = tf.nn.softmax(embedding,dim=1)
+            # tf.reshape(embedding,[1000,10])
+        return embedding
+
+    def predict_similarity(self):
+        # A, B分别是两个样本经过网络传播之后的提取后的特征/embedding
+        # 求两个向量的余弦夹角：A*B/|A|*|B|
+
+        cosi = tf.reduce_mean(tf.divide(tf.reduce_sum(tf.multiply(self.output1,self.output2),axis=1),
+                    tf.multiply( tf.sqrt(tf.reduce_sum(tf.square(self.output1),axis=1)),
+                    tf.sqrt(tf.reduce_sum(tf.square(self.output2),axis=1)))))
+        cosi = (cosi+1)/2.0 # 平移伸缩变换到[0,1]区间内,谱聚类算法要求的亲和矩阵中不能产生负值。
+        return cosi
+
+    def contro_loss(self):
+        s = self.similarity
+        one = tf.constant(1.0)
+        margin = 1.0
+        y_true = tf.to_float(self.y_true)
+        between_class = tf.multiply(one-y_true,s)
+
+        max_part = tf.square(tf.maximum(margin-s,0))
+        within_class = tf.multiply(y_true,max_part)
+        loss = 0.5*tf.reduce_mean(within_class+between_class)
+        tf.summary.scalar('loss',loss)
+        return loss
+
+    def variable_summaries(self,var):
+        '''Attach a lot of summaries to a Tensor (for Tensorboard visualization).'''
+        with tf.name_scope('summaries'):
+            # computing mean of var recording by tf.summary.scalar
+            mean = tf.reduce_mean(var)
+            tf.summary.scalar('mean',mean)
+            with tf.name_scope('stddev'):
+                stddev = tf.sqrt(tf.reduce_mean(tf.square(var-mean)))
+            # record std,maximum,minimum
+            tf.summary.scalar('stddev',stddev)
+            tf.summary.scalar('max',tf.reduce_max(var))
+            tf.summary.scalar('min',tf.reduce_min(var))
+            # record the distribution of var in histogram
+            tf.summary.histogram('histogram',var)
+
+    def weight_variable(self,shape):
+        initial = tf.truncated_normal(shape,stddev=0.1)
+        return tf.Variable(initial)
+
+    def bias_variable(self,shape):
+        initial = tf.constant(0.1,shape=shape)
+        return tf.Variable(initial)
+
+    def conv2d(self,x,w):
+        return tf.nn.conv2d(x,w,strides=[1,1,1,1],padding='SAME')
+
+    def max_pool_2x2(self,x):
+        return tf.nn.max_pool(x,ksize=[1,2,2,1],strides=[1,2,2,1], padding='SAME')
